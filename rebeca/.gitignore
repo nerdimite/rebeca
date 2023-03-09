@@ -131,3 +131,5 @@ dmypy.json
 data/MakeWaterfall
 *.model
 *.weights
+data/memory.index
+data/memory.json
