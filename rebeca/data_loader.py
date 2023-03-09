@@ -247,7 +247,7 @@ class DataLoader:
     - Loads up individual files as trajectory files (i.e. if a trajectory is split into multiple files,
       this code will load it up as a separate item).
     """
-    def __init__(self, dataset_dir, n_workers=8, batch_size=8, n_epochs=1, max_queue_size=8):
+    def __init__(self, dataset_dir, num_demonstrations=None, n_workers=8, batch_size=8, n_epochs=1, max_queue_size=8):
         assert n_workers >= batch_size, "Number of workers must be equal or greater than batch size"
         self.dataset_dir = dataset_dir
         self.n_workers = n_workers
@@ -257,6 +257,8 @@ class DataLoader:
         unique_ids = glob.glob(os.path.join(dataset_dir, "*.mp4"))
         unique_ids = list(set([os.path.basename(x).split(".")[0] for x in unique_ids]))
         self.unique_ids = unique_ids
+        if num_demonstrations is not None:
+            self.unique_ids = self.unique_ids[:num_demonstrations]
         # Create tuples of (video_path, json_path) for each unique_id
         demonstration_tuples = []
         for unique_id in unique_ids:

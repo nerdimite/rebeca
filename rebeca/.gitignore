@@ -129,3 +129,5 @@ dmypy.json
 
 # MineRL related files
 data/MakeWaterfall
+*.model
+*.weights
