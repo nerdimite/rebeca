@@ -8,10 +8,11 @@ import torch
 from openai_vpt.lib.policy import MinecraftPolicy
 from openai_vpt.lib.tree_util import tree_map
 
-class VPTEncoder:
+class VPTEncoder(torch.nn.Module):
     """VPT Encoder for Embedding Situations and Single Observations"""
 
     def __init__(self, model_path, weights_path=None, freeze=True, device="auto"):
+        super().__init__()
 
         agent_policy_kwargs = self.load_model_parameters(model_path)
         self.policy = MinecraftPolicy(**agent_policy_kwargs, single_output=True)
@@ -50,13 +51,13 @@ class VPTEncoder:
             obs_frame, (128, 128), interpolation=cv2.INTER_LINEAR
         )[None]
         policy_input = {"img": torch.from_numpy(policy_input).to(self.device)}
+        policy_input = tree_map(lambda x: x.unsqueeze(1), policy_input)
         return policy_input
 
-    def encode(self, obs, state_in):
+    def forward(self, obs, state_in):
         """Encode observation into latent space"""
 
         obs = self.preprocess_obs(obs)
-        obs = tree_map(lambda x: x.unsqueeze(1), obs)
         latent_vec, state_out = self.policy(
             obs, state_in, context={"first": self.dummy_first}
         )
@@ -72,7 +73,7 @@ class VPTEncoder:
             latent_vectors = []
 
             for obs in tqdm(trajectory, desc="Encoding Trajectory", leave=False):
-                latent, state_out = self.encode(obs, hidden_state)
+                latent, state_out = self(obs, hidden_state)
                 hidden_state = state_out
                 latent_vectors.append(latent.squeeze().detach().cpu().numpy())
 

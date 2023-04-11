@@ -19,7 +19,7 @@ class SituationLoader:
     """Data loader for loading expert demonstrations and creating situation embeddings"""
 
     def __init__(self, vpt_model: VPTEncoder, data_dir="data/MakeWaterfall/"):
-        self.vpt = VPTEncoder
+        self.vpt = vpt_model
         self.load_expert_data(data_dir)
 
     def load_expert_data(self, data_dir):
