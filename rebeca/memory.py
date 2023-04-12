@@ -119,7 +119,7 @@ class Memory:
         self.index.add(self._create_situation_array(situations))
 
         self.situation_ids = [
-            {"demo_id": x["demo_id"], "sit_frame_idx": x["sit_frame_idx"]}
+            {"demo_id": x["demo_id"], "sit_frame_idx": x["sit_frame_idx"], "actions": x["actions"]}
             for x in situations
         ]
 
@@ -133,7 +133,7 @@ class Memory:
                     "demo_id": self.situation_ids[idx]["demo_id"],
                     "sit_frame_idx": self.situation_ids[idx]["sit_frame_idx"], # Frame index of the situation in the video
                     "distance": distances[0][i],
-                    # "actions": self.situation_ids[idx]["actions"],
+                    "actions": self.situation_ids[idx]["actions"],
                 }
             )
         return result
