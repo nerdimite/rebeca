@@ -13,6 +13,7 @@ from openai_vpt.lib.policy import MinecraftPolicy
 from openai_vpt.lib.tree_util import tree_map
 
 from model import VPTEncoder
+from action_utils import ActionProcessor
 
 
 class SituationLoader:
@@ -20,6 +21,7 @@ class SituationLoader:
 
     def __init__(self, vpt_model: VPTEncoder, data_dir="data/MakeWaterfall/"):
         self.vpt = vpt_model
+        self.action_processor = ActionProcessor()
         self.load_expert_data(data_dir)
 
     def load_expert_data(self, data_dir):
@@ -58,7 +60,7 @@ class SituationLoader:
         for demo in tqdm(demonstrations, desc="Encoding expert demonstrations"):
             encoded_demo = self.vpt.encode_trajectory(demo["video"])
             encoded_demos.append(
-                {"demo_id": demo["demo_id"], "encoded_demo": encoded_demo}
+                {"demo_id": demo["demo_id"], "encoded_demo": encoded_demo, "actions": demo["jsonl"]}
             )
         return encoded_demos
 
@@ -71,8 +73,9 @@ class SituationLoader:
                 situations.append(
                     {
                         "demo_id": demo["demo_id"],
-                        "situation_idx": i,
+                        "sit_frame_idx": i, # Frame index of the situation in the video
                         "situation": demo["encoded_demo"][i],
+                        "actions": self.action_processor.json_to_action_vector(demo["actions"][i : i + 128]), # The next 128 actions in the situation
                     }
                 )
         return situations
@@ -116,7 +119,7 @@ class Memory:
         self.index.add(self._create_situation_array(situations))
 
         self.situation_ids = [
-            {"demo_id": x["demo_id"], "situation_idx": x["situation_idx"]}
+            {"demo_id": x["demo_id"], "sit_frame_idx": x["sit_frame_idx"]}
             for x in situations
         ]
 
@@ -125,11 +128,12 @@ class Memory:
         result = []
         for i, idx in enumerate(nearest_indices[0]):
             result.append(
-                {
+                {   
+                    "idx": idx,
                     "demo_id": self.situation_ids[idx]["demo_id"],
-                    "situation_idx": self.situation_ids[idx]["situation_idx"],
+                    "sit_frame_idx": self.situation_ids[idx]["sit_frame_idx"], # Frame index of the situation in the video
                     "distance": distances[0][i],
-                    # TODO: add the next 128 actions in the situation
+                    # "actions": self.situation_ids[idx]["actions"],
                 }
             )
         return result
