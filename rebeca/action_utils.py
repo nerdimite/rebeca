@@ -152,7 +152,7 @@ class ActionProcessor:
 
     def json_to_action_vector(self, json_actions, to_list=True):
         """
-        Converts a list of original json actions into a sequence of one-hot encoded actions.
+        Converts a list of original json actions into encoded actions.
         """
         buttons = []
         camera = []
@@ -164,20 +164,20 @@ class ActionProcessor:
                 camera.append(agent_action["camera"].squeeze().tolist())
 
         # convert to one-hot
-        buttons = np.array(buttons)
-        camera = np.array(camera)
+        # buttons = np.array(buttons)
+        # camera = np.array(camera)
 
-        buttons_vector = np.zeros((buttons.shape[0], 8641))
-        camera_vector = np.zeros((camera.shape[0], 121))
+        # buttons_vector = np.zeros((buttons.shape[0], 8641))
+        # camera_vector = np.zeros((camera.shape[0], 121))
 
-        for i in range(buttons.shape[0]):
-            buttons_vector[i, buttons[i]] = 1
+        # for i in range(buttons.shape[0]):
+        #     buttons_vector[i, buttons[i]] = 1
 
-        for i in range(camera.shape[0]):
-            camera_vector[i, camera[i]] = 1
+        # for i in range(camera.shape[0]):
+        #     camera_vector[i, camera[i]] = 1
 
-        if to_list:
-            buttons_vector = buttons_vector.tolist()
-            camera_vector = camera_vector.tolist()
+        # if to_list:
+        #     buttons_vector = buttons_vector.tolist()
+        #     camera_vector = camera_vector.tolist()
 
-        return {"buttons": buttons_vector, "camera": camera_vector}
+        return {"buttons": buttons, "camera": camera}
