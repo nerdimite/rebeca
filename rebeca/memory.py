@@ -155,7 +155,7 @@ class Memory:
         with open(json_path, "r") as f:
             situations_meta = json.load(f)
 
-        self.situations_ids = situations_meta["situation_ids"]
+        self.situation_ids = situations_meta["situation_ids"]
         self.index = faiss.read_index(
             os.path.join(os.path.dirname(json_path), situations_meta["index_file"])
         )
