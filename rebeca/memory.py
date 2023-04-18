@@ -115,7 +115,7 @@ class Memory:
     """Memory class for indexing and retrieving situations"""
 
     def create_index(self, situations):
-        self.index = faiss.IndexFlatL2(1024)
+        self.index = faiss.IndexFlatL2(1024, faiss.METRIC_INNER_PRODUCT)
         self.index.add(self._create_situation_array(situations))
 
         self.situation_ids = [
@@ -129,7 +129,7 @@ class Memory:
         for i, idx in enumerate(nearest_indices[0]):
             result.append(
                 {   
-                    "idx": idx,
+                    "idx": int(idx),
                     "demo_id": self.situation_ids[idx]["demo_id"],
                     "sit_frame_idx": self.situation_ids[idx]["sit_frame_idx"], # Frame index of the situation in the video
                     "distance": distances[0][i],
