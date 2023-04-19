@@ -128,7 +128,7 @@ dmypy.json
 .pyre/
 
 # MineRL related files
-data/MakeWaterfall
+data/MakeWaterfall*
 *.model
 *.weights
 data/memory.index

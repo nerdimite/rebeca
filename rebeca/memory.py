@@ -29,6 +29,7 @@ class SituationLoader:
 
         unique_ids = glob.glob(os.path.join(data_dir, "*.mp4"))
         unique_ids = list(set([os.path.basename(x).split(".")[0] for x in unique_ids]))
+        unique_ids.sort()
 
         self.demonstration_tuples = []
         for unique_id in unique_ids:
@@ -63,6 +64,34 @@ class SituationLoader:
                 {"demo_id": demo["demo_id"], "encoded_demo": encoded_demo, "actions": demo["jsonl"]}
             )
         return encoded_demos
+
+    def load_encode_save_demos(self, num_demos=None, save_dir="data/MakeWaterfallEncoded/"):
+        '''Load, encode and save expert demonstrations to disk'''
+        
+        # Select the number of demonstrations to load
+        if num_demos is not None:
+            _demonstration_tuples = self.demonstration_tuples[:num_demos]
+        else:
+            _demonstration_tuples = self.demonstration_tuples
+
+        # Create a directory to save the encoded demonstrations
+        os.makedirs(save_dir, exist_ok=True)
+        
+        for unique_id, video_path, json_path in tqdm(
+            _demonstration_tuples, desc="Loading expert demonstrations"
+        ):
+            video = self._load_video(video_path)
+            jsonl = self._load_jsonl(json_path)
+            
+            # Encode the demonstration
+            encoded_demo = self.vpt.encode_trajectory(video, tolist=True)
+
+            encoded_demo_json = {"demo_id": unique_id, "encoded_demo": encoded_demo, "actions": jsonl}
+
+            # Save the encoded demonstration to disk
+            with open(os.path.join(save_dir, unique_id + ".pkl"), "wb") as f:
+                pickle.dump(encoded_demo_json, f)
+
 
     def create_situations(self, encoded_demos, window_size=128, stride=2):
         situations = []
@@ -112,7 +141,7 @@ class SituationLoader:
 
 
 class Memory:
-    """Memory class for indexing and retrieving situations"""
+    """FAISS based Memory class for indexing and retrieving situations"""
 
     def create_index(self, situations):
         self.index = faiss.IndexFlatL2(1024, faiss.METRIC_INNER_PRODUCT)

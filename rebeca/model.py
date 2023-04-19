@@ -65,7 +65,7 @@ class VPTEncoder(torch.nn.Module):
 
         return latent_vec, state_out
 
-    def encode_trajectory(self, trajectory):
+    def encode_trajectory(self, trajectory, tolist=False):
         """Encode expert trajectory frames into a latent vector with state history"""
 
         with torch.inference_mode():
@@ -76,7 +76,10 @@ class VPTEncoder(torch.nn.Module):
             for obs in tqdm(trajectory, desc="Encoding Trajectory", leave=False):
                 latent, state_out = self(obs, hidden_state)
                 hidden_state = state_out
-                latent_vectors.append(latent.squeeze().detach().cpu().numpy())
+                latent = latent.squeeze().detach().cpu().numpy()
+                if tolist: 
+                    latent = latent.tolist()
+                latent_vectors.append(latent)
 
             return latent_vectors
         
