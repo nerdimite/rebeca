@@ -133,3 +133,4 @@ data/MakeWaterfall*
 *.weights
 data/memory.index
 data/memory.json
+data/situations.pkl

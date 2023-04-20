@@ -8,7 +8,7 @@
 # or maximum of set number of demonstrations,
 # to a specified directory.
 #
-# python utils/download_dataset.py --json-file utils/waterfall-Jul-28.json --output-dir data/MakeWaterfall/ --num-demos 1000
+# python utils/download_dataset.py --json-file utils/waterfall-Jul-28.json --output-dir data/MakeWaterfallTrain/ --start-idx 1000 --end-idx 3000
 
 import cv2
 import glob
@@ -58,8 +58,7 @@ def main(args):
     data = eval(data)
     basedir = data["basedir"]
     relpaths = data["relpaths"]
-    if args.num_demos is not None:
-        relpaths = relpaths[:args.num_demos]
+    relpaths = relpaths[args.start_idx:args.end_idx]
 
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
@@ -97,6 +96,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Download OpenAI contractor datasets")
     parser.add_argument("--json-file", type=str, required=True, help="Path to the index .json file")
     parser.add_argument("--output-dir", type=str, required=True, help="Path to the output directory")
-    parser.add_argument("--num-demos", type=int, default=None, help="Maximum number of demonstrations to download")
+    parser.add_argument("--start-idx", type=int, default=0, help="Start index of demonstrations to download")
+    parser.add_argument("--end-idx", type=int, default=-1, help="End index of demonstrations to download")
     args = parser.parse_args()
     main(args)

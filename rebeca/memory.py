@@ -92,6 +92,28 @@ class SituationLoader:
             with open(os.path.join(save_dir, unique_id + ".pkl"), "wb") as f:
                 pickle.dump(encoded_demo_json, f)
 
+    
+    def load_encoded_demos_to_situations(self, save_dir="data/MakeWaterfallEncoded/", window_size=128, stride=2):
+        '''Load encoded demonstrations from disk and create situations'''
+        
+        situations = []
+        for pkl_path in tqdm(glob.glob(os.path.join(save_dir, "*.pkl")), desc="Loading encoded demonstrations"):
+            with open(pkl_path, "rb") as f:
+                demo = pickle.load(f)
+                for i in range(
+                    window_size, len(demo["encoded_demo"]) - window_size, stride
+                ):
+                    situations.append(
+                        {
+                            "demo_id": demo["demo_id"],
+                            "sit_frame_idx": i, # Frame index of the situation in the video
+                            "situation": demo["encoded_demo"][i],
+                            "actions": self.action_processor.json_to_action_vector(demo["actions"][i : i + 128]), # The next 128 actions in the situation
+                        }
+                    )
+
+        return situations
+
 
     def create_situations(self, encoded_demos, window_size=128, stride=2):
         situations = []
@@ -144,7 +166,7 @@ class Memory:
     """FAISS based Memory class for indexing and retrieving situations"""
 
     def create_index(self, situations):
-        self.index = faiss.IndexFlatL2(1024, faiss.METRIC_INNER_PRODUCT)
+        self.index = faiss.IndexFlatL2(1024)
         self.index.add(self._create_situation_array(situations))
 
         self.situation_ids = [
