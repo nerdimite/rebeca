@@ -4,7 +4,7 @@ This script is used to make predictions on a video using the inverse dynamics mo
 python predict_inverse_dynamics_model.py \
 --weights models/4x_idm.weights \
 --model models/4x_idm.model \
---video-path data/demo-320.mp4
+--video-path data/demo-4006.mp4
 '''
 
 from argparse import ArgumentParser
