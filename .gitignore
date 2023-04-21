@@ -2,4 +2,5 @@ notes/
 __pycache__
 Video-Pre-Training/models
 Video-Pre-Training/data/Player*
+Video-Pre-Training/data/cheeky*
 logs
