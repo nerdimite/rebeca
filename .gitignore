@@ -2,3 +2,4 @@ notes/
 __pycache__
 Video-Pre-Training/models
 Video-Pre-Training/data
+logs
