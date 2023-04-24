@@ -160,7 +160,7 @@ class REBECA(nn.Module):
 
         self.action_transformer = ActionTransformer(**ACTION_TRANSFORMER_KWARGS)
 
-    def forward(self, obs):
+    def forward(self, obs, env):
         # retrieve situations only if the agent diverges from the previous situation
         if self.current_situation is None:
             result, query_obs_vec = self.retriever.retrieve(obs)
@@ -203,7 +203,7 @@ class REBECA(nn.Module):
             obs_vector.to(self.device), situation.to(self.device), retrieved_actions
         )
 
-        return action
+        return env.action_space.noop()
 
     def reset(self):
         self.hidden_state = self.vpt.policy.initial_state(1)

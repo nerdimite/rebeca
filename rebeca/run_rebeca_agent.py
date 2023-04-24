@@ -6,7 +6,7 @@ import minerl
 import cv2
 from time import sleep
 
-# from rebeca import REBECA
+from rebeca import REBECA
 from seeds import SEEDS
 
 import logging
@@ -15,25 +15,24 @@ coloredlogs.install(logging.DEBUG)
 
 def main(model, weights, memory, env, seed=0, max_steps=int(1e9), show=True):
     env = gym.make(env)
-    # rebeca = REBECA(model, weights, memory, device='cuda')
-    # rebeca.to(rebeca.device)
+    rebeca = REBECA(model, weights, memory, device='cuda')
+    rebeca.to(rebeca.device)
     print('Model loaded')
 
     cap = cv2.VideoCapture(SEEDS[seed])
     # obs = env.reset()
+    rebeca.reset()
 
     for _ in range(max_steps):
-        ret, obs = cap.read()
-        # action = rebeca(obs)
-        action = env.action_space.noop()
-        
+        ret, curr_obs = cap.read()
+        action = rebeca(curr_obs, env)
         # obs, _, done, _ = env.step(action)
         
         if not ret:
             break
         if show:
-            cv2.imshow('MineRL', obs)
-            cv2.waitKey(8)
+            cv2.imshow('MineRL', curr_obs)
+            cv2.waitKey(1)
             # env.render()
 
     cv2.destroyAllWindows()
