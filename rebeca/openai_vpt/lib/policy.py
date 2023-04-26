@@ -221,6 +221,63 @@ class MinecraftPolicy(nn.Module):
         else:
             return None
 
+class VPTCNN(nn.Module):
+    """VPT's CNN architecture only.
+    :param init_norm_kwargs: kwargs for all FanInInitReLULayers.
+    """
+
+    def __init__(
+        self,
+        impala_width=1,
+        impala_chans=(16, 32, 32),
+        hidsize=512,
+        img_shape=None,
+        scale_input_img=True,
+        init_norm_kwargs={},
+        impala_kwargs={},
+        img_statistics=None,
+        first_conv_norm=False,
+        **unused_kwargs,
+    ):
+        super().__init__()
+
+        chans = tuple(int(impala_width * c) for c in impala_chans)
+        self.hidsize = hidsize
+
+        # Dense init kwargs replaces batchnorm/groupnorm with layernorm
+        self.init_norm_kwargs = init_norm_kwargs
+        self.dense_init_norm_kwargs = deepcopy(init_norm_kwargs)
+        if self.dense_init_norm_kwargs.get("group_norm_groups", None) is not None:
+            self.dense_init_norm_kwargs.pop("group_norm_groups", None)
+            self.dense_init_norm_kwargs["layer_norm"] = True
+        if self.dense_init_norm_kwargs.get("batch_norm", False):
+            self.dense_init_norm_kwargs.pop("batch_norm", False)
+            self.dense_init_norm_kwargs["layer_norm"] = True
+
+        # Setup inputs
+        self.img_preprocess = ImgPreprocessing(img_statistics=img_statistics, scale_img=scale_input_img)
+        self.img_process = ImgObsProcess(
+            cnn_outsize=256,
+            output_size=hidsize,
+            inshape=img_shape,
+            chans=chans,
+            nblock=2,
+            dense_init_norm_kwargs=self.dense_init_norm_kwargs,
+            init_norm_kwargs=init_norm_kwargs,
+            first_conv_norm=first_conv_norm,
+            **impala_kwargs,
+        )
+
+    def output_latent_size(self):
+        return self.hidsize
+
+    def forward(self, ob):
+
+        x = self.img_preprocess(ob["img"])
+        x = self.img_process(x)
+
+        return x
+
 
 class MinecraftAgentPolicy(nn.Module):
     def __init__(self, action_space, policy_kwargs, pi_head_kwargs):
