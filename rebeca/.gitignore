@@ -131,6 +131,5 @@ dmypy.json
 data/MakeWaterfall*
 *.model
 *.weights
-data/memory.index
-data/memory.json
-data/situations.pkl
+data/memory*
+data/situations*.pkl

@@ -16,6 +16,13 @@ from model import VPTEncoder
 from action_utils import ActionProcessor
 
 
+def generate_situation_weights(time_array=np.linspace(0, 5, 20), A=1, tau=0.2, C=0):
+    """Generate a weight array for situations based on an exponential decay function"""
+    weights = A * np.exp(-time_array / tau) + C # exp decay
+    weights = np.array(weights / np.sum(weights))
+    return weights[::-1]
+
+
 class SituationLoader:
     """Data loader for loading expert demonstrations and creating situation embeddings"""
 
@@ -93,22 +100,27 @@ class SituationLoader:
                 pickle.dump(encoded_demo_json, f)
 
     
-    def load_encoded_demos_to_situations(self, save_dir="data/MakeWaterfallEncoded/", window_size=128, stride=2):
+    def load_encoded_demos_to_situations(self, save_dir="data/MakeWaterfallEncoded/", num=None, window_size=128, stride=2):
         '''Load encoded demonstrations from disk and create situations'''
         
+        situation_weights = generate_situation_weights()
+
         situations = []
-        for pkl_path in tqdm(glob.glob(os.path.join(save_dir, "*.pkl")), desc="Loading encoded demonstrations"):
+        for pkl_path in tqdm(glob.glob(os.path.join(save_dir, "*.pkl"))[:num], desc="Loading encoded demonstrations"):
             with open(pkl_path, "rb") as f:
                 demo = pickle.load(f)
                 for i in range(
                     window_size, len(demo["encoded_demo"]) - window_size, stride
                 ):
+                    situation_embeds = np.array(demo['encoded_demo'][i-(window_size-1):i+1])
+                    # Take a weighted average of the situation embeddings
+                    situation = np.average(situation_embeds, axis=0, weights=situation_weights)
                     situations.append(
                         {
                             "demo_id": demo["demo_id"],
                             "sit_frame_idx": i, # Frame index of the situation in the video
-                            "situation": demo["encoded_demo"][i],
-                            "actions": self.action_processor.json_to_action_vector(demo["actions"][i : i + 128]), # The next 128 actions in the situation
+                            "situation": situation,
+                            "actions": self.action_processor.json_to_action_vector([demo["actions"][i + 1]]),
                         }
                     )
 
