@@ -135,93 +135,46 @@ class Retriever:
         
         return results[0], query_obs
 
+
 class REBECA(nn.Module):
-    def __init__(self, encoder_model, encoder_weights, memory_path, device="auto"):
+    def __init__(self, vpt_model, cnn_weights, trf_weights, memory_path, device='auto'):
         super().__init__()
 
-        if device == "auto":
+        if device == 'auto':
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         else:
             self.device = device
 
-        self.retriever = Retriever(encoder_model, encoder_weights, memory_path)
+        self.retriever = Retriever(vpt_model, cnn_weights, memory_path)
+        self.vpt_cnn = VPTCNNEncoder(vpt_model, cnn_weights)
+        self.vpt_cnn.eval()
 
-        # Unfreeze final layers
-        self.vpt = VPTEncoder(encoder_model, encoder_weights, freeze=True)
-        self.trainable_parameters = []
-        for param in self.vpt.policy.lastlayer.parameters():
-            param.requires_grad = True
-            self.trainable_parameters.append(param)
+        self.controller = Controller(vpt_model)
+        if trf_weights:
+            self.controller.vpt_transformers.load_state_dict(torch.load(trf_weights, map_location=torch.device('cuda')))
 
-        self.controller = Controller()
-
-        # Set the default torch device for underlying code as well
+        # Action processing
         set_default_torch_device(self.device)
         self.action_mapper = CameraHierarchicalMapping(n_camera_bins=11)
         action_space = self.action_mapper.get_action_space_update()
         action_space = DictType(**action_space)
-
         self.action_transformer = ActionTransformer(**ACTION_TRANSFORMER_KWARGS)
 
-    def forward(self, obs, env):
-        # retrieve situations only if the agent diverges from the previous situation
-        if self.current_situation is None:
-            result, query_obs_vec = self.retriever.retrieve(obs)
-            self.current_situation = result
-            self.situation_counter += 1
-        else:
-            query_obs_vec = self.retriever.encode_query(obs)
-            if (
-                l2_distance(
-                    query_obs_vec,
-                    self.retriever.memory.index.reconstruct(self.current_situation["idx"]),
-                )
-                > 300
-                or self.situation_counter > 128
-            ):
-                result, query_obs_vec = self.retriever.retrieve(
-                    query_obs_vec, encode_obs=False
-                )
-                self.current_situation = result
-                self.situation_counter = 0
-            else:
-                self.situation_counter += 1
-                result = self.current_situation
+    def forward(self, obs, state_in):
+        
+        # extract features from observation
+        obs_feats = self.vpt_cnn(obs)
 
-        situation = torch.Tensor(
-            self.retriever.memory.index.reconstruct(result["idx"])
-        ).reshape(1, 1, -1)
-        obs_vector, self.hidden_state = self.vpt(obs, self.hidden_state)
+        # retrieve situation from memory
+        situation, _ = self.retriever.retrieve(obs_feats.to('cpu'), k=1, encode_obs=False)
 
-        retrieved_actions = {
-            "camera": self._one_hot_encode(result["actions"]["camera"], 121).to(
-                self.device
-            ),
-            "keyboard": self._one_hot_encode(result["actions"]["buttons"], 8641).to(
-                self.device
-            ),
-        }
+        # process retrieved situations
+        situation_embed, situation_actions, next_action = preprocess_situation(situation, self.device)
+        
+        # forward pass through controller
+        action_logits, state_out = self.controller(obs_feats, situation_embed, situation_actions, next_action, state_in)
 
-        action = self.controller(
-            obs_vector.to(self.device), situation.to(self.device), retrieved_actions
-        )
-
-        return env.action_space.noop()
-
-    def reset(self):
-        self.hidden_state = self.vpt.policy.initial_state(1)
-        self.current_situation = None
-        self.situation_counter = 0
-        self.retriever.reset()
-
-    def _one_hot_encode(
-        self, actions: list, num_classes: int, add_batch_dim: bool = True
-    ):
-        """One-hot encodes the actions"""
-        actions = torch.tensor(actions)
-        if add_batch_dim:
-            actions = actions.unsqueeze(0)
-        return torch.nn.functional.one_hot(actions, num_classes=num_classes).float()
+        return action_logits, state_out
 
     def _env_action_to_agent(self, minerl_action_transformed, to_torch=False, check_if_null=False):
         """
