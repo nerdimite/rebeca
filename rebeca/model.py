@@ -197,7 +197,7 @@ class IntraSituationCA(nn.Module):
 class Controller(nn.Module):
     """Applies Cross Attention on the observation embedding with the situation embeddings and the next action"""
 
-    def __init__(self):
+    def __init__(self, vpt_kwargs, device='cuda'):
         super().__init__()
 
         # Define some constants
@@ -230,11 +230,16 @@ class Controller(nn.Module):
         # Define output layer for concatenation or addition
         self.Wo = nn.Linear(d_v, d_model)  # project output vector to original dimension
 
+        # Define VPT Transformer layers
+        self.vpt_transformers = VPTRecurrence(**vpt_kwargs)
+        self.dummy_first = torch.from_numpy(np.array((False,))).unsqueeze(1)
+
+        # Define Action Heads
         self.action_head = nn.ModuleDict(
             {"camera": nn.Linear(d_model, 121), "keyboard": nn.Linear(d_model, 8641)}
         )
 
-    def forward(self, observation, situation, situation_actions, next_action):
+    def forward(self, observation, situation, situation_actions, next_action, state_in):
         
         # Apply intra-situation cross attention
         situation = self.intra_situation_ca(situation, situation_actions)
@@ -262,11 +267,17 @@ class Controller(nn.Module):
         # Apply output layer on the output vector
         out_obs = self.Wo(out_obs)
 
-        # Apply action head on the output vector
-        out_key = self.action_head["keyboard"](out_obs)
-        out_cam = self.action_head["camera"](out_obs)
+        # Apply VPT Transformer
+        latent, state_out = self.vpt_transformers(out_obs, state_in, self.dummy_first)
+
+        # Apply action heads on the final latent vector
+        out_key = self.action_head["keyboard"](latent)
+        out_cam = self.action_head["camera"](latent)
 
         return {
             'keyboard': out_key.reshape(1, -1),
             'camera': out_cam.reshape(1, -1)
-        }
+        }, state_out
+
+    def initial_state(self, batch_size):
+        return self.vpt_transformers.initial_state(batch_size)
