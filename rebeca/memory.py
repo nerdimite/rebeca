@@ -111,16 +111,22 @@ class SituationLoader:
                 demo = pickle.load(f)
                 for i in range(
                     window_size, len(demo["encoded_demo"]) - window_size, stride
-                ):
+                ):  
+                    # Get the situation embeddings and actions
                     situation_embeds = np.array(demo['encoded_demo'][i-(window_size-1):i+1])
+                    situation_actions = self.action_processor.json_to_action_vector(demo["actions"][i-(window_size-1):i+1])
+                    next_action = self.action_processor.json_to_action_vector([demo["actions"][i + 1]])
+                    
                     # Take a weighted average of the situation embeddings
                     situation = np.average(situation_embeds, axis=0, weights=situation_weights)
+                    
                     situations.append(
                         {
                             "demo_id": demo["demo_id"],
                             "sit_frame_idx": i, # Frame index of the situation in the video
                             "situation": situation,
-                            "actions": self.action_processor.json_to_action_vector([demo["actions"][i + 1]]),
+                            "situation_actions": situation_actions,
+                            "next_action": next_action
                         }
                     )
 
@@ -181,10 +187,8 @@ class Memory:
         self.index = faiss.IndexFlatL2(1024)
         self.index.add(self._create_situation_array(situations))
 
-        self.situation_ids = [
-            {"demo_id": x["demo_id"], "sit_frame_idx": x["sit_frame_idx"], "actions": x["actions"]}
-            for x in situations
-        ]
+        # Store the situations without the situation embeddings
+        self.situations_meta = [{k: v for k, v in s.items() if k != "situation"} for s in situations]
 
     def search(self, query, k=4):
         distances, nearest_indices = self.index.search(query.reshape(1, 1024), k)
@@ -193,10 +197,9 @@ class Memory:
             result.append(
                 {   
                     "idx": int(idx),
-                    "demo_id": self.situation_ids[idx]["demo_id"],
-                    "sit_frame_idx": self.situation_ids[idx]["sit_frame_idx"], # Frame index of the situation in the video
                     "distance": distances[0][i],
-                    "actions": self.situation_ids[idx]["actions"],
+                    **self.situations_meta[idx],
+                    'embedding': self.index.reconstruct(int(idx))
                 }
             )
         return result
@@ -209,7 +212,7 @@ class Memory:
             json.dump(
                 {
                     "index_file": filename + ".index",
-                    "situation_ids": self.situation_ids,
+                    "situations_meta": self.situations_meta,
                 },
                 f,
             )
@@ -218,7 +221,7 @@ class Memory:
         with open(json_path, "r") as f:
             situations_meta = json.load(f)
 
-        self.situation_ids = situations_meta["situation_ids"]
+        self.situations_meta = situations_meta["situations_meta"]
         self.index = faiss.read_index(
             os.path.join(os.path.dirname(json_path), situations_meta["index_file"])
         )

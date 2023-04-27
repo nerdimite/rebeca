@@ -6,7 +6,7 @@ import numpy as np
 from scipy.spatial.distance import euclidean
 import torch
 from torch import nn
-from model import VPTEncoder, Controller
+from model import VPTEncoder, Controller, VPTCNNEncoder
 from memory import Memory
 
 import torch as th
@@ -17,9 +17,6 @@ from openai_vpt.lib.action_mapping import CameraHierarchicalMapping
 from openai_vpt.lib.actions import ActionTransformer
 from openai_vpt.lib.policy import MinecraftAgentPolicy
 from openai_vpt.lib.torch_util import default_device_type, set_default_torch_device
-
-def l2_distance(a, b):
-    return euclidean(a, b) ** 2
 
 # Hardcoded settings
 AGENT_RESOLUTION = (128, 128)
@@ -101,36 +98,42 @@ def resize_image(img, target_resolution):
 def l2_distance(a, b):
     return euclidean(a, b) ** 2
 
+def one_hot_encode(actions: list, num_classes: int, add_batch_dim: bool = True):
+    '''One-hot encodes the actions'''
+    actions = torch.tensor(actions)
+    if add_batch_dim:
+        actions = actions.unsqueeze(0)
+    return torch.nn.functional.one_hot(actions, num_classes=num_classes).float()
+
+def preprocess_situation(situation, device='cuda'):
+    retrieved_situation = torch.Tensor(situation['embedding']).to(device).reshape(1, 1, -1)
+    retrieved_actions = {
+        "camera": one_hot_encode(situation['situation_actions']['camera'], 121).to(device),
+        "keyboard": one_hot_encode(situation['situation_actions']['buttons'], 8641).to(device)
+    }
+    next_action = {
+        "camera": one_hot_encode(situation['next_action']['camera'], 121).to(device),
+        "keyboard": one_hot_encode(situation['next_action']['buttons'], 8641).to(device)
+    }
+
+    return retrieved_situation, retrieved_actions, next_action
+
 class Retriever:
     def __init__(self, encoder_model, encoder_weights, memory_path):
-        self.vpt = VPTEncoder(encoder_model, encoder_weights)
+        self.vpt = VPTCNNEncoder(encoder_model, encoder_weights)
         self.vpt.eval()
         self.memory = Memory()
         self.memory.load_index(memory_path)
 
-        self.reset()
-
     def encode_query(self, query_obs):
-        query_obs_vec, state_out = self.vpt(query_obs, self.hidden_state)
-        self.hidden_state = state_out
-        query_obs_vec = query_obs_vec.squeeze().cpu().numpy()
-        return query_obs_vec
+        return self.vpt(query_obs).squeeze().cpu().numpy()
 
-    def retrieve(self, query_obs, k=2, encode_obs=True):
+    def retrieve(self, query_obs, k=1, encode_obs=True):
         if encode_obs:
             query_obs = self.encode_query(query_obs)
         results = self.memory.search(query_obs, k=k)
-
-        if (
-            results[0]["distance"] == 0
-        ):  # to prevent returning the same situation and overfitting
-            print("Same situation found")
-            return results[1], query_obs
-        else:
-            return results[0], query_obs
-
-    def reset(self):
-        self.hidden_state = self.vpt.policy.initial_state(1)
+        
+        return results[0], query_obs
 
 class REBECA(nn.Module):
     def __init__(self, encoder_model, encoder_weights, memory_path, device="auto"):
