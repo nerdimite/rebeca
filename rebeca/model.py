@@ -180,8 +180,8 @@ class IntraSituationCA(nn.Module):
 
         # Project input tensors to query, key and value vectors
         q_sit = self.Wq_sit(situation)  # query vector tensor of shape [1, 1, 1024]
-        k_key = self.Wk_key(actions['keyboard'])  # key vector tensor of shape [1, 20, 1024]
-        v_key = self.Wv_key(actions['keyboard'])  # value vector tensor of shape [1, 20, 1024]
+        k_key = self.Wk_key(actions['buttons'])  # key vector tensor of shape [1, 20, 1024]
+        v_key = self.Wv_key(actions['buttons'])  # value vector tensor of shape [1, 20, 1024]
         k_cam = self.Wk_cam(actions['camera'])  # key vector tensor of shape [1, 20, 1024]
         v_cam = self.Wv_cam(actions['camera'])  # value vector tensor of shape [1, 20, 1024]
 
@@ -197,7 +197,7 @@ class IntraSituationCA(nn.Module):
 class Controller(nn.Module):
     """Applies Cross Attention on the observation embedding with the situation embeddings and the next action"""
 
-    def __init__(self, vpt_kwargs, device='cuda'):
+    def __init__(self, vpt_model, device='cuda'):
         super().__init__()
 
         # Define some constants
@@ -231,12 +231,12 @@ class Controller(nn.Module):
         self.Wo = nn.Linear(d_v, d_model)  # project output vector to original dimension
 
         # Define VPT Transformer layers
-        self.vpt_transformers = VPTRecurrence(**vpt_kwargs)
+        self.vpt_transformers = VPTRecurrence(**self.load_vpt_parameters(vpt_model))
         self.dummy_first = torch.from_numpy(np.array((False,))).unsqueeze(1)
 
         # Define Action Heads
         self.action_head = nn.ModuleDict(
-            {"camera": nn.Linear(d_model, 121), "keyboard": nn.Linear(d_model, 8641)}
+            {"camera": nn.Linear(d_model, 121), "buttons": nn.Linear(d_model, 8641)}
         )
 
     def forward(self, observation, situation, situation_actions, next_action, state_in):
@@ -248,14 +248,19 @@ class Controller(nn.Module):
         q_obs = self.Wq_obs(observation)  # query vector tensor of shape [1, 1, 1024]
         k_sit = self.Wk_sit(situation)  # key vector tensor of shape [1, 1, 1024]
         v_sit = self.Wv_sit(situation)  # value vector tensor of shape [1, 1, 1024]
-        k_key = self.Wk_next_key(next_action['keyboard'])  # key vector tensor of shape [1, 1, 1024]
-        v_key = self.Wv_next_key(next_action['keyboard'])  # value vector tensor of shape [1, 1, 1024]
-        k_cam = self.Wk_next_cam(next_action['camera'])  # key vector tensor of shape [1, 1, 1024]
+        k_key = self.Wk_next_key(next_action['buttons'])  # key vector tensor of shape [1, 1, 1024]
+        v_key = self.Wv_next_key(next_action['buttons'])  # value vector tensor of shape [1, 1, 1024]
+        k_cam = self.Wk_next_cam(next_action['camera']) # key vector tensor of shape [1, 1, 1024]
         v_cam = self.Wv_next_cam(next_action['camera'])  # value vector tensor of shape [1, 1, 1024]
 
         # Concatenate all the key and value vectors along the second dimension
+        # print(k_sit.shape, k_key.shape, k_cam.shape)
+        # try:
         key_vec = torch.cat([k_sit, k_key, k_cam], dim=1)  # key vector tensor of shape [1, 3, 1024]
         val_vec = torch.cat([v_sit, v_key, v_cam], dim=1)  # value vector tensor of shape [1, 3, 1024]
+        # except Exception as e:
+        #     # print(k_sit.shape, k_key.shape, k_cam.shape)
+        #     raise e
 
         # Apply multi-head attention on the query and key-value pairs
         out_obs, _ = self.cross_attention(q_obs, key_vec.transpose(0, 1), val_vec.transpose(0, 1))
@@ -271,13 +276,22 @@ class Controller(nn.Module):
         latent, state_out = self.vpt_transformers(out_obs, state_in, self.dummy_first)
 
         # Apply action heads on the final latent vector
-        out_key = self.action_head["keyboard"](latent)
+        out_key = self.action_head["buttons"](latent)
         out_cam = self.action_head["camera"](latent)
 
         return {
-            'keyboard': out_key.reshape(1, -1),
+            'buttons': out_key.reshape(1, -1),
             'camera': out_cam.reshape(1, -1)
         }, state_out
 
     def initial_state(self, batch_size):
         return self.vpt_transformers.initial_state(batch_size)
+
+    def load_vpt_parameters(self, model_path):
+        """Load model parameters from model_path"""
+
+        with open(model_path, "rb") as f:
+            agent_parameters = pickle.load(f)
+            policy_kwargs = agent_parameters["model"]["args"]["net"]["args"]
+
+            return policy_kwargs

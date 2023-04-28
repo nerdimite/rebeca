@@ -109,11 +109,14 @@ def preprocess_situation(situation, device='cuda'):
     retrieved_situation = torch.Tensor(situation['embedding']).to(device).reshape(1, 1, -1)
     retrieved_actions = {
         "camera": one_hot_encode(situation['situation_actions']['camera'], 121).to(device),
-        "keyboard": one_hot_encode(situation['situation_actions']['buttons'], 8641).to(device)
+        "buttons": one_hot_encode(situation['situation_actions']['buttons'], 8641).to(device)
     }
+
+    # print(len(situation['situation_actions']['camera']), len(situation['situation_actions']['buttons']))
+    
     next_action = {
         "camera": one_hot_encode(situation['next_action']['camera'], 121).to(device),
-        "keyboard": one_hot_encode(situation['next_action']['buttons'], 8641).to(device)
+        "buttons": one_hot_encode(situation['next_action']['buttons'], 8641).to(device)
     }
 
     return retrieved_situation, retrieved_actions, next_action
