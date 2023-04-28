@@ -133,3 +133,5 @@ data/MakeWaterfall*
 *.weights
 data/memory*
 data/situations*.pkl
+
+wandb

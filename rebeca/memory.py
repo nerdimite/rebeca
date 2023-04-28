@@ -76,10 +76,7 @@ class SituationLoader:
         '''Load, encode and save expert demonstrations to disk'''
         
         # Select the number of demonstrations to load
-        if num_demos is not None:
-            _demonstration_tuples = self.demonstration_tuples[:num_demos]
-        else:
-            _demonstration_tuples = self.demonstration_tuples
+        _demonstration_tuples = self.demonstration_tuples[:num_demos]
 
         # Create a directory to save the encoded demonstrations
         os.makedirs(save_dir, exist_ok=True)
@@ -115,7 +112,7 @@ class SituationLoader:
                     # Get the situation embeddings and actions
                     situation_embeds = np.array(demo['encoded_demo'][i-(window_size-1):i+1])
                     situation_actions = self.action_processor.json_to_action_vector(demo["actions"][i-(window_size-1):i+1])
-                    next_action = self.action_processor.json_to_action_vector([demo["actions"][i + 1]])
+                    next_action = self.action_processor.json_to_action_vector([demo["actions"][i]])
                     
                     # Take a weighted average of the situation embeddings
                     situation = np.average(situation_embeds, axis=0, weights=situation_weights)
@@ -130,29 +127,6 @@ class SituationLoader:
                         }
                     )
 
-        return situations
-
-
-    def create_situations(self, encoded_demos, window_size=128, stride=2):
-        situations = []
-        for demo in tqdm(encoded_demos, desc="Creating situations"):
-            for i in range(
-                window_size, len(demo["encoded_demo"]) - window_size, stride
-            ):
-                situations.append(
-                    {
-                        "demo_id": demo["demo_id"],
-                        "sit_frame_idx": i, # Frame index of the situation in the video
-                        "situation": demo["encoded_demo"][i],
-                        "actions": self.action_processor.json_to_action_vector(demo["actions"][i : i + 128]), # The next 128 actions in the situation
-                    }
-                )
-        return situations
-
-    def situation_pipeline(self):
-        demonstrations = self.load_demonstrations()
-        encoded_demos = self.encode_demonstrations(demonstrations)
-        situations = self.create_situations(encoded_demos)
         return situations
 
     def _load_video(self, video_path):

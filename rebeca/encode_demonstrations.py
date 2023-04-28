@@ -8,4 +8,4 @@ vpt = VPTCNNEncoder(in_model, in_weights, freeze=True)
 vpt.eval()
 expert_dataloader = SituationLoader(vpt, data_dir='data/MakeWaterfallDB')
 
-expert_dataloader.load_encode_save_demos(num_demos=1000, save_dir="data/MakwWaterfallDB-CNNEncoded")
+expert_dataloader.load_encode_save_demos(num_demos=None, save_dir="data/MakwWaterfallDB-CNNEncoded")

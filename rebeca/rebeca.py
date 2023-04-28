@@ -15,8 +15,10 @@ from gym import spaces
 
 from openai_vpt.lib.action_mapping import CameraHierarchicalMapping
 from openai_vpt.lib.actions import ActionTransformer
-from openai_vpt.lib.policy import MinecraftAgentPolicy
 from openai_vpt.lib.torch_util import default_device_type, set_default_torch_device
+from openai_vpt.lib.action_head import make_action_head
+from gym3.types import DictType
+from openai_vpt.lib.tree_util import tree_map
 
 # Hardcoded settings
 AGENT_RESOLUTION = (128, 128)
@@ -140,7 +142,7 @@ class Retriever:
 
 
 class REBECA(nn.Module):
-    def __init__(self, vpt_model, cnn_weights, trf_weights, memory_path, device='auto'):
+    def __init__(self, cnn_model, trf_model, cnn_weights, trf_weights, memory_path, device='auto'):
         super().__init__()
 
         if device == 'auto':
@@ -148,11 +150,11 @@ class REBECA(nn.Module):
         else:
             self.device = device
 
-        self.retriever = Retriever(vpt_model, cnn_weights, memory_path)
-        self.vpt_cnn = VPTCNNEncoder(vpt_model, cnn_weights)
+        self.retriever = Retriever(cnn_model, cnn_weights, memory_path)
+        self.vpt_cnn = VPTCNNEncoder(cnn_model, cnn_weights)
         self.vpt_cnn.eval()
 
-        self.controller = Controller(vpt_model)
+        self.controller = Controller(trf_model)
         if trf_weights:
             self.controller.vpt_transformers.load_state_dict(torch.load(trf_weights, map_location=torch.device('cuda')))
 
@@ -162,6 +164,9 @@ class REBECA(nn.Module):
         action_space = self.action_mapper.get_action_space_update()
         action_space = DictType(**action_space)
         self.action_transformer = ActionTransformer(**ACTION_TRANSFORMER_KWARGS)
+
+        # Action head
+        self.action_head = make_action_head(action_space, self.controller.hid_dim, **PI_HEAD_KWARGS).to('cuda')
 
     def forward(self, obs, state_in):
         
@@ -175,7 +180,10 @@ class REBECA(nn.Module):
         situation_embed, situation_actions, next_action = preprocess_situation(situation, self.device)
         
         # forward pass through controller
-        action_logits, state_out = self.controller(obs_feats, situation_embed, situation_actions, next_action, state_in)
+        latent, state_out = self.controller(obs_feats, situation_embed, situation_actions, next_action, state_in)
+
+        # get action logits
+        action_logits = self.action_head(latent)
 
         return action_logits, state_out
 
@@ -202,3 +210,13 @@ class REBECA(nn.Module):
         if to_torch:
             action = {k: torch.from_numpy(v).to(self.device) for k, v in action.items()}
         return action
+
+    def get_logprob_of_action(self, pred, action):
+        """
+        Get logprob of taking action `action` given probability distribution
+        (see `get_gradient_for_action` to get this distribution)
+        """
+        ac = tree_map(lambda x: x.unsqueeze(1), action)
+        log_prob = self.action_head.logprob(ac, pred)
+        assert not th.isnan(log_prob).any()
+        return log_prob[:, 0]

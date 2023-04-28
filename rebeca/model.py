@@ -157,24 +157,24 @@ class VPTEncoder(torch.nn.Module):
 
 class IntraSituationCA(nn.Module):
     '''Intra-Situation Cross Attention'''
-    def __init__(self):
+    def __init__(self, hid_dim=1024):
         super().__init__()
 
         # Define some constants
-        d_model = 1024  # dimension of the input and output vectors
+        self.hid_dim = hid_dim  # dimension of the input and output vectors
         d_k = 1024  # dimension of the query and key vectors
         d_v = 1024  # dimension of the value vectors
         n_heads = 4  # number of attention heads
-        assert d_model % n_heads == 0  # make sure d_model is divisible by n_heads
+        assert self.hid_dim % n_heads == 0  # make sure hid_dim is divisible by n_heads
 
         # Define linear layers for projection
-        self.Wq_sit = nn.Linear(1024, d_model)  # project situation embedding to query vector
+        self.Wq_sit = nn.Linear(1024, self.hid_dim)  # project situation embedding to query vector
         self.Wk_key = nn.Linear(8641, d_k)  # project keyboard action one-hot vector to key vector
         self.Wv_key = nn.Linear(8641, d_v)  # project keyboard action one-hot vector to value vector
         self.Wk_cam = nn.Linear(121, d_k)  # project camera action one-hot vector to key vector
         self.Wv_cam = nn.Linear(121, d_v)  # project camera action one-hot vector to value vector
         
-        self.cross_attention = nn.MultiheadAttention(d_model, n_heads)
+        self.cross_attention = nn.MultiheadAttention(self.hid_dim, n_heads)
 
     def forward(self, situation, actions):
 
@@ -197,20 +197,20 @@ class IntraSituationCA(nn.Module):
 class Controller(nn.Module):
     """Applies Cross Attention on the observation embedding with the situation embeddings and the next action"""
 
-    def __init__(self, vpt_model, device='cuda'):
+    def __init__(self, vpt_model, hid_dim=1024, device='cuda'):
         super().__init__()
 
         # Define some constants
-        d_model = 1024  # dimension of the input and output vectors
+        self.hid_dim = hid_dim  # dimension of the input and output vectors
         d_k = 1024  # dimension of the query and key vectors
         d_v = 1024  # dimension of the value vectors
         n_heads = 4  # number of attention heads
-        assert d_model % n_heads == 0  # make sure d_model is divisible by n_heads
+        assert self.hid_dim % n_heads == 0  # make sure self.hid_dim is divisible by n_heads
 
         self.intra_situation_ca = IntraSituationCA()
 
         # Define linear layers for projection
-        self.Wq_obs = nn.Linear(1024, d_model)  # project observation embedding to query vector
+        self.Wq_obs = nn.Linear(1024, self.hid_dim)  # project observation embedding to query vector
         self.Wk_sit = nn.Linear(1024, d_k)  # project situation embedding to key vector
         self.Wv_sit = nn.Linear(1024, d_v)  # project situation embedding to value vector
         self.Wk_next_key = nn.Linear(8641, d_k)  # project next keyboard action one-hot vector to key vector
@@ -219,25 +219,20 @@ class Controller(nn.Module):
         self.Wv_next_cam = nn.Linear(121, d_v)  # project next camera action one-hot vector to value vector
 
         # Define multi-head attention layer
-        self.cross_attention = nn.MultiheadAttention(d_model, n_heads)
+        self.cross_attention = nn.MultiheadAttention(self.hid_dim, n_heads)
 
         # TODO: Dynamic scaling factor for cross-attention importance
         # TODO: condition on distance between observation and situation
-        # self.alpha_head = nn.Linear(d_model, 1)
+        # self.alpha_head = nn.Linear(self.hid_dim, 1)
         # self.alpha = nn.Parameter(torch.tensor(0.5))
         self.alpha = 1.0
 
         # Define output layer for concatenation or addition
-        self.Wo = nn.Linear(d_v, d_model)  # project output vector to original dimension
+        self.Wo = nn.Linear(d_v, self.hid_dim)  # project output vector to original dimension
 
         # Define VPT Transformer layers
         self.vpt_transformers = VPTRecurrence(**self.load_vpt_parameters(vpt_model))
         self.dummy_first = torch.from_numpy(np.array((False,))).unsqueeze(1)
-
-        # Define Action Heads
-        self.action_head = nn.ModuleDict(
-            {"camera": nn.Linear(d_model, 121), "buttons": nn.Linear(d_model, 8641)}
-        )
 
     def forward(self, observation, situation, situation_actions, next_action, state_in):
         
@@ -275,14 +270,7 @@ class Controller(nn.Module):
         # Apply VPT Transformer
         latent, state_out = self.vpt_transformers(out_obs, state_in, self.dummy_first)
 
-        # Apply action heads on the final latent vector
-        out_key = self.action_head["buttons"](latent)
-        out_cam = self.action_head["camera"](latent)
-
-        return {
-            'buttons': out_key.reshape(1, -1),
-            'camera': out_cam.reshape(1, -1)
-        }, state_out
+        return latent, state_out
 
     def initial_state(self, batch_size):
         return self.vpt_transformers.initial_state(batch_size)

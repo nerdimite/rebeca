@@ -7,11 +7,14 @@
 from argparse import ArgumentParser
 import pickle
 import time
+from tqdm.auto import tqdm
 
 import gym
 import minerl
 import torch as th
 import numpy as np
+import wandb
+from transformers import get_linear_schedule_with_warmup
 
 from openai_vpt.agent import PI_HEAD_KWARGS, MineRLAgent
 from data_loader import DataLoader
@@ -32,7 +35,7 @@ BATCH_SIZE = 64 if USING_FULL_DATASET else 16
 N_WORKERS = 100 if USING_FULL_DATASET else 20
 DEVICE = "cuda"
 
-LOSS_REPORT_RATE = 100
+SAVE_FREQ = 100
 
 # Tuned with bit of trial and error
 LEARNING_RATE = 0.000181
@@ -43,7 +46,7 @@ WEIGHT_DECAY = 0.0
 KL_LOSS_WEIGHT = 1.0
 MAX_GRAD_NORM = 5.0
 
-MAX_BATCHES = 2000 if USING_FULL_DATASET else int(1e9)
+MAX_BATCHES = 20000 if USING_FULL_DATASET else int(1e9)
 
 def load_model_parameters(path_to_model_file):
     agent_parameters = pickle.load(open(path_to_model_file, "rb"))
@@ -52,24 +55,37 @@ def load_model_parameters(path_to_model_file):
     pi_head_kwargs["temperature"] = float(pi_head_kwargs["temperature"])
     return policy_kwargs, pi_head_kwargs
 
-def behavioural_cloning_train(data_dir, in_model, in_weights, out_weights):
+def behavioural_cloning_train(data_dir, in_model, in_weights, save_dir):
+
+    wandb.init(
+        project="rebeca-mp",
+        entity="nerdimite",
+        config={
+            "model_config": in_model,
+        },
+        tags=["dummy_run"]
+    )
+
     agent_policy_kwargs, agent_pi_head_kwargs = load_model_parameters(in_model)
 
     agent = MineRLAgent(device=DEVICE, policy_kwargs=agent_policy_kwargs, pi_head_kwargs=agent_pi_head_kwargs)
     agent.load_weights(in_weights)
 
-    # Create a copy which will have the original parameters
-    original_agent = MineRLAgent(device=DEVICE, policy_kwargs=agent_policy_kwargs, pi_head_kwargs=agent_pi_head_kwargs)
-    original_agent.load_weights(in_weights)
-
     policy = agent.policy
-    original_policy = original_agent.policy
 
-    # Freeze most params if using small dataset
+    # Freeze all parameters first
     for param in policy.parameters():
         param.requires_grad = False
-    # Unfreeze final layers
+
+    # Unfreeze recurrent layers
     trainable_parameters = []
+    for param in policy.net.recurrent_layer.blocks[-2].parameters():
+        param.requires_grad = True
+        trainable_parameters.append(param)
+    for param in policy.net.recurrent_layer.blocks[-1].parameters():
+        param.requires_grad = True
+        trainable_parameters.append(param)
+    # Unfreeze final layers
     for param in policy.net.lastlayer.parameters():
         param.requires_grad = True
         trainable_parameters.append(param)
@@ -84,6 +100,12 @@ def behavioural_cloning_train(data_dir, in_model, in_weights, out_weights):
         weight_decay=WEIGHT_DECAY
     )
 
+    scheduler = get_linear_schedule_with_warmup(
+        optimizer,
+        num_warmup_steps=0,
+        num_training_steps=MAX_BATCHES
+    )
+
     data_loader = DataLoader(
         dataset_dir=data_dir,
         n_workers=N_WORKERS,
@@ -91,14 +113,14 @@ def behavioural_cloning_train(data_dir, in_model, in_weights, out_weights):
         n_epochs=EPOCHS,
     )
 
-    start_time = time.time()
-
     # Keep track of the hidden state per episode/trajectory.
     # DataLoader provides unique id for each episode, which will
     # be different even for the same trajectory when it is loaded
     # up again
     episode_hidden_states = {}
     dummy_first = th.from_numpy(np.array((False,))).to(DEVICE)
+
+    pbar = tqdm(total=MAX_BATCHES)
 
     loss_sum = 0
     for batch_i, (batch_images, batch_actions, batch_episode_id) in enumerate(data_loader):
@@ -127,15 +149,7 @@ def behavioural_cloning_train(data_dir, in_model, in_weights, out_weights):
                 dummy_first
             )
 
-            with th.no_grad():
-                original_pi_distribution, _, _ = original_policy.get_output_for_observation(
-                    agent_obs,
-                    agent_state,
-                    dummy_first
-                )
-
             log_prob  = policy.get_logprob_of_action(pi_distribution, agent_action)
-            kl_div = policy.get_kl_of_action_dists(pi_distribution, original_pi_distribution)
 
             # Make sure we do not try to backprop through sequence
             # (fails with current accumulation)
@@ -145,32 +159,35 @@ def behavioural_cloning_train(data_dir, in_model, in_weights, out_weights):
             # Finally, update the agent to increase the probability of the
             # taken action.
             # Remember to take mean over batch losses
-            loss = (-log_prob + KL_LOSS_WEIGHT * kl_div) / BATCH_SIZE
+            loss = -log_prob / BATCH_SIZE
             batch_loss += loss.item()
             loss.backward()
 
         th.nn.utils.clip_grad_norm_(trainable_parameters, MAX_GRAD_NORM)
         optimizer.step()
         optimizer.zero_grad()
+        scheduler.step()
 
-        loss_sum += batch_loss
-        if batch_i % LOSS_REPORT_RATE == 0:
-            time_since_start = time.time() - start_time
-            print(f"Time: {time_since_start:.2f}, Batches: {batch_i}, Avrg loss: {loss_sum / LOSS_REPORT_RATE:.4f}")
-            loss_sum = 0
+        pbar.set_postfix({"batch_loss": batch_loss / BATCH_SIZE, "lr": scheduler.get_last_lr()})
+        pbar.update(1)
+        wandb.log({"batch_loss": batch_loss / BATCH_SIZE, "lr": scheduler.get_last_lr()})
+
+        if batch_i % SAVE_FREQ == 0 and batch_i > 0:
+            state_dict = agent.controller.state_dict()
+            th.save(state_dict, f"{save_dir}/{wandb.run.name}_{batch_i}.weights")
 
         if batch_i > MAX_BATCHES:
             break
 
     state_dict = policy.state_dict()
-    th.save(state_dict, out_weights)
+    th.save(state_dict, f"{save_dir}/{wandb.run.name}.weights")
 
 if __name__ == "__main__":
     parser = ArgumentParser()
-    parser.add_argument("--data-dir", type=str, required=True, help="Path to the directory containing recordings to be trained on")
-    parser.add_argument("--in-model", required=True, type=str, help="Path to the .model file to be finetuned")
-    parser.add_argument("--in-weights", required=True, type=str, help="Path to the .weights file to be finetuned")
-    parser.add_argument("--out-weights", required=True, type=str, help="Path where finetuned weights will be saved")
+    parser.add_argument("--data-dir", type=str, default="data/MakeWaterfallTrain/", help="Path to the directory containing recordings to be trained on")
+    parser.add_argument("--in-model", default="data/VPT-models/foundation-model-1x.model", type=str, help="Path to the .model file to be finetuned")
+    parser.add_argument("--in-weights", default="data/VPT-models/foundation-model-1x.weights", type=str, help="Path to the .weights file to be finetuned")
+    parser.add_argument("--save-dir", default="models", type=str, help="Path where finetuned weights will be saved")
 
     args = parser.parse_args()
-    behavioural_cloning_train(args.data_dir, args.in_model, args.in_weights, args.out_weights)
+    behavioural_cloning_train(args.data_dir, args.in_model, args.in_weights, args.save_dir)

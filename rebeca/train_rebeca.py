@@ -7,11 +7,14 @@
 from argparse import ArgumentParser
 import pickle
 import time
+from tqdm.auto import tqdm
 
 import gym
 import minerl
 import torch
 import numpy as np
+import wandb
+from transformers import get_linear_schedule_with_warmup
 
 from rebeca import REBECA
 from openai_vpt.agent import PI_HEAD_KWARGS, MineRLAgent
@@ -33,7 +36,7 @@ BATCH_SIZE = 64 if USING_FULL_DATASET else 16
 N_WORKERS = 100 if USING_FULL_DATASET else 20
 DEVICE = "cuda"
 
-LOSS_REPORT_RATE = 10
+SAVE_FREQ = 100
 
 # Tuned with bit of trial and error
 LEARNING_RATE = 0.000181
@@ -54,27 +57,47 @@ def load_model_parameters(path_to_model_file):
     pi_head_kwargs["temperature"] = float(pi_head_kwargs["temperature"])
     return policy_kwargs, pi_head_kwargs
 
-def behavioural_cloning_train(data_dir, in_model, cnn_weights, trf_weights, out_weights):
+def train(data_dir, cnn_model, trf_model, cnn_weights, trf_weights, save_dir):
+
+    # wandb.init(
+    #     project="rebeca-mp",
+    #     entity="nerdimite",
+    #     config={
+    #         "cnn_config": cnn_model,
+    #         "trf_config": trf_model,
+    #     },
+    #     tags=["dummy_run"]
+    # )
 
     # Load the model
-    agent = REBECA(in_model, cnn_weights, trf_weights, "data/memory_cnn.json", device=DEVICE).to(DEVICE)
+    agent = REBECA(cnn_model, trf_model, cnn_weights, trf_weights, "data/memory_cnn.json", device=DEVICE).to(DEVICE)
 
-    # Freeze all parameters
+    # Freeze all parameters first
     for param in agent.parameters():
         param.requires_grad = False
 
     # Unfreeze controller layers
     trainable_parameters = []
+    trainable_param_names = []
     for name, param in agent.named_parameters():
-        if name.startswith("controller.vpt_transformers"):
+        if name.startswith("controller") or name.startswith("action_head"):
+            # if not name.startswith("controller.vpt_transformers.recurrent_layer"):
             param.requires_grad = True
             trainable_parameters.append(param)
+            trainable_param_names.append(name)
+    # print("Trainable parameters:", trainable_param_names)
 
     # Parameters taken from the OpenAI VPT paper
     optimizer = torch.optim.Adam(
         trainable_parameters,
         lr=LEARNING_RATE,
         weight_decay=WEIGHT_DECAY
+    )
+
+    scheduler = get_linear_schedule_with_warmup(
+        optimizer,
+        num_warmup_steps=200,
+        num_training_steps=MAX_BATCHES
     )
 
     data_loader = DataLoader(
@@ -85,17 +108,15 @@ def behavioural_cloning_train(data_dir, in_model, cnn_weights, trf_weights, out_
         num_demonstrations=NUM_DEMOS
     )
 
-    start_time = time.time()
-
     # Keep track of the hidden state per episode/trajectory.
     # DataLoader provides unique id for each episode, which will
     # be different even for the same trajectory when it is loaded
     # up again
     episode_hidden_states = {}
 
-    loss_sum = 0
+    pbar = tqdm(total=MAX_BATCHES)
     for batch_i, (batch_images, batch_actions, batch_episode_id) in enumerate(data_loader):
-        batch_loss = []
+        batch_loss = 0
         for image, action, episode_id in zip(batch_images, batch_actions, batch_episode_id):
             if image is None and action is None:
                 # A work-item was done. Remove hidden state
@@ -113,7 +134,7 @@ def behavioural_cloning_train(data_dir, in_model, cnn_weights, trf_weights, out_
                 episode_hidden_states[episode_id] = agent.controller.initial_state(1)
             agent_state = episode_hidden_states[episode_id]
 
-            pred_action, new_agent_state = agent(image, agent_state)
+            action_logits, new_agent_state = agent(image, agent_state)
 
             # Make sure we do not try to backprop through sequence
             # (fails with current accumulation)
@@ -122,36 +143,48 @@ def behavioural_cloning_train(data_dir, in_model, cnn_weights, trf_weights, out_
 
             # Finally, update the agent to increase the probability of the
             # taken action.
-            buttons_log_prob = torch.log_softmax(pred_action['buttons'], dim=-1)
-            buttons_loss = -buttons_log_prob[0, agent_action['buttons'].long()]
-            camera_log_prob = torch.log_softmax(pred_action['camera'], dim=-1)
-            camera_loss = -camera_log_prob[0, agent_action['camera'].long()]
-            loss = buttons_loss + camera_loss
-            batch_loss.append(loss)
+            log_prob  = agent.get_logprob_of_action(action_logits, agent_action)
 
-        batch_loss = torch.stack(batch_loss).mean()
-        batch_loss.backward()
+            # Make sure we do not try to backprop through sequence
+            # (fails with current accumulation)
+            new_agent_state = tree_map(lambda x: x.detach(), new_agent_state)
+            episode_hidden_states[episode_id] = new_agent_state
+
+            # Finally, update the agent to increase the probability of the
+            # taken action.
+            # Remember to take mean over batch losses
+            loss = -log_prob / BATCH_SIZE
+            batch_loss += loss.item()
+            loss.backward()
 
         torch.nn.utils.clip_grad_norm_(trainable_parameters, MAX_GRAD_NORM)
         optimizer.step()
         optimizer.zero_grad()
-
-        time_since_start = time.time() - start_time
-        print(f"Time: {time_since_start:.2f}, Batches: {batch_i}, Avrg loss: {batch_loss:.4f}")
+        scheduler.step()
+        
+        pbar.set_postfix({"batch_loss": batch_loss, "lr": scheduler.get_last_lr()})
+        pbar.update(1)
+        # wandb.log({"batch_loss": batch_loss, "lr": scheduler.get_last_lr()})
+        
+        # if batch_i % SAVE_FREQ == 0 and batch_i > 0:
+        #     state_dict = agent.controller.state_dict()
+        #     torch.save(state_dict, f"{save_dir}/{wandb.run.name}_{batch_i}.weights")
 
         if batch_i > MAX_BATCHES:
             break
 
     state_dict = agent.controller.state_dict()
-    torch.save(state_dict, out_weights)
+    # torch.save(state_dict, f"{save_dir}/{wandb.run.name}.weights")
+    torch.save(state_dict, f"{save_dir}/rebeca-1x.weights")
 
 if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("--data-dir", type=str, default="data/MakeWaterfallTrain/", help="Path to the directory containing recordings to be trained on")
-    parser.add_argument("--in-model", default="data/VPT-models/foundation-model-1x.model", type=str, help="Path to the .model file to be finetuned")
+    parser.add_argument("--cnn-model", default="data/VPT-models/foundation-model-1x.model", type=str, help="Path to the .model file to be finetuned")
+    parser.add_argument("--trf-model", default="data/VPT-models/foundation-model-1x.model", type=str, help="Path to the .model file to be finetuned")
     parser.add_argument("--cnn-weights", default="data/VPT-models/foundation-model-1x-cnn.weights", type=str, help="Path to the .weights file to be finetuned")
     parser.add_argument("--trf-weights", default="data/VPT-models/foundation-model-1x-trf.weights", type=str, help="Path to the .weights file to be finetuned")
-    parser.add_argument("--out-weights", default="train/rebeca_test.weights", type=str, help="Path where finetuned weights will be saved")
+    parser.add_argument("--save-dir", default="models", type=str, help="Path where finetuned weights will be saved")
 
     args = parser.parse_args()
-    behavioural_cloning_train(args.data_dir, args.in_model, args.cnn_weights, args.trf_weights, args.out_weights)
+    train(args.data_dir, args.cnn_model, args.trf_model, args.cnn_weights, args.trf_weights, args.save_dir)
