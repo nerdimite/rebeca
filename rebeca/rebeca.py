@@ -19,6 +19,7 @@ from openai_vpt.lib.torch_util import default_device_type, set_default_torch_dev
 from openai_vpt.lib.action_head import make_action_head
 from gym3.types import DictType
 from openai_vpt.lib.tree_util import tree_map
+from action_utils import cache_process
 
 # Hardcoded settings
 AGENT_RESOLUTION = (128, 128)
@@ -168,8 +169,8 @@ class REBECA(nn.Module):
         # Action head
         self.action_head = make_action_head(action_space, self.controller.hid_dim, **PI_HEAD_KWARGS).to('cuda')
 
-    def forward(self, obs, state_in):
-        
+    def forward(self, obs, state_in, cache=True):
+    
         # extract features from observation
         obs_feats = self.vpt_cnn(obs)
 
@@ -179,13 +180,16 @@ class REBECA(nn.Module):
         # process retrieved situations
         situation_embed, situation_actions, next_action = preprocess_situation(situation, self.device)
         
-        # forward pass through controller
-        latent, state_out = self.controller(obs_feats, situation_embed, situation_actions, next_action, state_in)
+        if not cache:
+            # forward pass through controller
+            latent, state_out = self.controller(obs_feats, situation_embed, situation_actions, next_action, state_in)
 
-        # get action logits
-        action_logits = self.action_head(latent)
+            # get action logits
+            action_logits = self.action_head(latent)
 
-        return action_logits, state_out
+            return action_logits, state_out
+        else:
+            return cache_process(obs, state_in)
 
     def _env_action_to_agent(self, minerl_action_transformed, to_torch=False, check_if_null=False):
         """

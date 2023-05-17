@@ -181,3 +181,7 @@ class ActionProcessor:
         #     camera_vector = camera_vector.tolist()
 
         return {"buttons": buttons, "camera": camera}
+
+
+def cache_process(situation, state):
+    return [], []
