@@ -26,7 +26,7 @@ from openai_vpt.lib.tree_util import tree_map
 # Use this flag to switch between the two settings
 USING_FULL_DATASET = True
 
-EPOCHS = 1 if USING_FULL_DATASET else 2
+EPOCHS = 4 if USING_FULL_DATASET else 1
 # Needs to be <= number of videos
 BATCH_SIZE = 64 if USING_FULL_DATASET else 16
 # Ideally more than batch size to create
